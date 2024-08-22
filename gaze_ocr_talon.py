@@ -38,6 +38,10 @@ finally:
     # Restore the unmodified path.
     sys.path = saved_path.copy()
 
+
+def move_cursor_to_gaze_point_helper(offset_right: int = 0, offset_down: int = 0):
+    tracker.move_to_gaze_point((offset_right, offset_down))
+
 mod = Module()
 ctx = Context()
 
