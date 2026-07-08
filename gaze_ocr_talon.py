@@ -728,17 +728,18 @@ def _clamp_rect_to_screen(r: rect.Rect) -> rect.Rect:
 
     Canvases that span multiple screens with different DPI/scale factors
     can disappear on macOS. This finds the best screen and clamps the rect
-    to stay within its bounds.
+    to stay within its bounds. If the rect overlaps no screen, returns it
+    unchanged since clamping would produce a degenerate rect.
     """
-    best_screen = max(
-        screen.screens(),
-        key=lambda s: (
-            max(0, min(r.x + r.width, s.rect.x + s.rect.width) - max(r.x, s.rect.x))
-            * max(0, min(r.y + r.height, s.rect.y + s.rect.height) - max(r.y, s.rect.y))
-        ),
-        default=None,
-    )
-    if best_screen is None:
+
+    def overlap_area(s) -> float:
+        return max(
+            0, min(r.x + r.width, s.rect.x + s.rect.width) - max(r.x, s.rect.x)
+        ) * max(0, min(r.y + r.height, s.rect.y + s.rect.height) - max(r.y, s.rect.y))
+
+    best_screen = max(screen.screens(), key=overlap_area, default=None)
+    if best_screen is None or overlap_area(best_screen) == 0:
+        logging.warning(f"Rect does not overlap any screen; not clamping: {r}")
         return r
     sr = best_screen.rect
     clamped = r.copy()
