@@ -907,6 +907,13 @@ def begin_generator(generator):
         pass
 
 
+def _raise_if_not_found(result, text: TimestampedText):
+    """If a controller generator found no match, show the OCR overlay and raise."""
+    if not result:
+        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
+        raise RuntimeError(f'Unable to find: "{text}"')
+
+
 def move_cursor_to_word_generator(text: TimestampedText, disambiguate: bool = True):
     result = yield from gaze_ocr_controller.move_cursor_to_words_generator(
         text.text,
@@ -914,9 +921,7 @@ def move_cursor_to_word_generator(text: TimestampedText, disambiguate: bool = Tr
         time_range=(text.start, text.end),
         click_offset_right=lambda: settings.get("user.ocr_click_offset_right"),
     )
-    if not result:
-        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
-        raise RuntimeError(f'Unable to find: "{text}"')
+    _raise_if_not_found(result, text)
 
 
 def move_text_cursor_to_word_generator(
@@ -932,9 +937,7 @@ def move_text_cursor_to_word_generator(
         click_offset_right=lambda: settings.get("user.ocr_click_offset_right"),
         hold_shift=hold_shift,
     )
-    if not result:
-        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
-        raise RuntimeError(f'Unable to find: "{text}"')
+    _raise_if_not_found(result, text)
 
 
 def move_text_cursor_to_longest_prefix_generator(
@@ -951,9 +954,7 @@ def move_text_cursor_to_longest_prefix_generator(
         click_offset_right=lambda: settings.get("user.ocr_click_offset_right"),
         hold_shift=hold_shift,
     )
-    if not locations:
-        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
-        raise RuntimeError(f'Unable to find: "{text}"')
+    _raise_if_not_found(locations, text)
     return prefix_length
 
 
@@ -962,7 +963,7 @@ def move_text_cursor_to_longest_suffix_generator(
 ):
     (
         locations,
-        prefix_length,
+        suffix_length,
     ) = yield from gaze_ocr_controller.move_text_cursor_to_longest_suffix_generator(
         text.text,
         disambiguate=True,
@@ -971,10 +972,8 @@ def move_text_cursor_to_longest_suffix_generator(
         click_offset_right=lambda: settings.get("user.ocr_click_offset_right"),
         hold_shift=hold_shift,
     )
-    if not locations:
-        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
-        raise RuntimeError(f'Unable to find: "{text}"')
-    return prefix_length
+    _raise_if_not_found(locations, text)
+    return suffix_length
 
 
 def move_text_cursor_to_difference(text: TimestampedText):
@@ -984,9 +983,7 @@ def move_text_cursor_to_difference(text: TimestampedText):
         time_range=(text.start, text.end),
         click_offset_right=lambda: settings.get("user.ocr_click_offset_right"),
     )
-    if not result:
-        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
-        raise RuntimeError(f'Unable to find: "{text}"')
+    _raise_if_not_found(result, text)
     return result
 
 
@@ -1026,9 +1023,7 @@ def select_matching_text_generator(text: TimestampedText):
         click_offset_right=lambda: settings.get("user.ocr_click_offset_right"),
         select_pause_seconds=lambda: settings.get("user.ocr_select_pause_seconds"),
     )
-    if not result:
-        actions.user.show_ocr_overlay_for_query("text", f"{text.text}")
-        raise RuntimeError(f'Unable to find: "{text}"')
+    _raise_if_not_found(result, text)
 
 
 def select_text_range_generator(
@@ -1826,7 +1821,7 @@ class GazeOcrActions:
                 )
             except RuntimeError as e:
                 # Keep going so the user doesn't lose the dictated text.
-                print(e)
+                logging.warning(e)
             insertion_text = text.text
             context_sensitive_insert(insertion_text)
 
@@ -1843,7 +1838,7 @@ class GazeOcrActions:
                 )
             except RuntimeError as e:
                 # Keep going so the user doesn't lose the dictated text.
-                print(e)
+                logging.warning(e)
             insertion_text = text.text
             context_sensitive_insert(insertion_text)
 
