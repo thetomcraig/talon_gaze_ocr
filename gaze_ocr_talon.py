@@ -1411,6 +1411,9 @@ class GazeOcrActions:
             assert not disambiguation_generator
             assert not disambiguation_canvas
             raise RuntimeError("Disambiguation not active")
+        if not 1 <= index <= len(ambiguous_matches):
+            app.notify(f"Invalid choice: {index}. Choose 1-{len(ambiguous_matches)}.")
+            return
         ctx.tags = []
         disambiguation_canvas.close()
         disambiguation_canvas = None
