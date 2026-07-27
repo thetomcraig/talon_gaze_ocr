@@ -7,10 +7,7 @@ from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import islice
-from typing import (
-    Any,
-    Optional,
-)
+from typing import Any
 
 try:
     from rapidfuzz import fuzz
@@ -54,17 +51,22 @@ try:
 except ImportError:
     dxcam = None
 try:
-    from talon import actions, screen, ui
+    from talon import actions, ctrl, screen, ui
     from talon.types.rect import Rect
 except ImportError:
-    ui = screen = Rect = actions = None
+    ui = screen = Rect = actions = ctrl = None
 
 # Represented as [left, top, right, bottom] pixel coordinates
 BoundingBox = tuple[int, int, int, int]
 
+# Callback function for debugging image processing steps.
+# Parameters: (name: str, image: Any)
+DebugImageCallback = Callable[[str, Any], None]
+
 if Rect:
 
-    def to_rect(bounding_box: BoundingBox) -> Rect:
+    def to_rect(bounding_box: BoundingBox) -> Any:
+        assert Rect is not None
         return Rect(
             x=bounding_box[0],
             y=bounding_box[1],
@@ -72,7 +74,7 @@ if Rect:
             height=bounding_box[3] - bounding_box[1],
         )
 
-    def to_bounding_box(rect_talon: Rect) -> BoundingBox:
+    def to_bounding_box(rect_talon: Any) -> BoundingBox:
         return (
             rect_talon.x,
             rect_talon.y,
@@ -115,15 +117,16 @@ class Reader:
     def create_reader(
         cls,
         backend: str | _base.OcrBackend,
-        tesseract_data_path=None,
-        tesseract_command=None,
-        threshold_function="local_otsu",
-        threshold_block_size=41,
-        correction_block_size=31,
-        convert_grayscale=True,
-        shift_channels=True,
-        debug_image_callback=None,
-        language_tag=None,
+        tesseract_data_path: str | None = None,
+        tesseract_command: str | None = None,
+        threshold_function: str | Callable[[Any], Any] | None = "local_otsu",
+        threshold_block_size: int | None = 41,
+        correction_block_size: int | None = 31,
+        convert_grayscale: bool | None = True,
+        shift_channels: bool | None = True,
+        invert_dark_images: bool = False,
+        debug_image_callback: DebugImageCallback | None = None,
+        language_tag: str | None = None,
         **kwargs,
     ) -> "Reader":
         """Create reader with specified backend."""
@@ -134,6 +137,8 @@ class Reader:
                 raise ValueError(
                     "Tesseract backend unavailable. To install, run pip install screen-ocr[tesseract]."
                 )
+            assert convert_grayscale is not None
+            assert shift_channels is not None
             backend = _tesseract.TesseractBackend(
                 tesseract_data_path=tesseract_data_path,
                 tesseract_command=tesseract_command,
@@ -144,14 +149,14 @@ class Reader:
                 shift_channels=shift_channels,
                 debug_image_callback=debug_image_callback,
             )
-            defaults = {
+            tesseract_defaults: dict[str, Any] = {
                 "resize_factor": 2,
                 "margin": 50,
             }
             return cls(
                 backend,
                 debug_image_callback=debug_image_callback,
-                **dict(defaults, **kwargs),
+                **dict(tesseract_defaults, **kwargs),
             )
         if backend == "easyocr":
             if not _easyocr:
@@ -171,17 +176,18 @@ class Reader:
                 raise ValueError(
                     "WinRT backend unavailable. To install, run pip install screen-ocr[winrt]."
                 ) from e
+            winrt_defaults: dict[str, Any] = {"resize_factor": 2}
             return cls(
                 backend,
                 debug_image_callback=debug_image_callback,
-                **dict({"resize_factor": 2}, **kwargs),
+                **dict(winrt_defaults, **kwargs),
             )
         if backend == "talon":
             if not _talon:
                 raise ValueError(
                     "Talon backend unavailable. Requires installing and running in Talon (see talonvoice.com)."
                 )
-            backend = _talon.TalonBackend()
+            backend = _talon.TalonBackend(invert_dark_images=invert_dark_images)
             return cls(backend, debug_image_callback=debug_image_callback, **kwargs)
         raise RuntimeError(f"Unsupported backend: {backend}")
 
@@ -191,11 +197,11 @@ class Reader:
         margin: int = 0,
         resize_factor: int = 1,
         resize_method=None,  # Pillow resize method
-        debug_image_callback: Optional[Callable[[str, Any], None]] = None,
+        debug_image_callback: DebugImageCallback | None = None,
         confidence_threshold: float = 0.75,
         radius: int = 200,  # screenshot "radius"
         search_radius: int = 125,
-        homophones: Optional[Mapping[str, Iterable[str]]] = None,
+        homophones: Mapping[str, Iterable[str]] | None = None,
     ):
         self._backend = backend
         self.margin = margin
@@ -222,8 +228,8 @@ class Reader:
     def read_nearby(
         self,
         screen_coordinates: tuple[int, int],
-        search_radius: Optional[int] = None,
-        crop_radius: Optional[int] = None,
+        search_radius: int | None = None,
+        crop_radius: int | None = None,
     ):
         """Return ScreenContents nearby the provided coordinates."""
         search_radius = search_radius or self.search_radius
@@ -242,7 +248,7 @@ class Reader:
             search_radius=search_radius,
         )
 
-    def read_screen(self, bounding_box: Optional[BoundingBox] = None):
+    def read_screen(self, bounding_box: BoundingBox | None = None):
         """Return ScreenContents for the entire screen."""
         screenshot, bounding_box = self._clean_screenshot(bounding_box)
         return self.read_image(
@@ -269,9 +275,9 @@ class Reader:
     def read_image(
         self,
         image,
-        bounding_box: Optional[BoundingBox] = None,
-        screen_coordinates: Optional[tuple[int, int]] = None,
-        search_radius: Optional[int] = None,
+        bounding_box: BoundingBox | None = None,
+        screen_coordinates: tuple[int, int] | None = None,
+        search_radius: int | None = None,
     ):
         """Return ScreenContents of the provided image."""
         bounding_box = bounding_box or (0, 0, image.width, image.height)
@@ -294,27 +300,41 @@ class Reader:
         return _talon and isinstance(self._backend, _talon.TalonBackend)
 
     def _clean_screenshot(
-        self, bounding_box: Optional[BoundingBox], clamp_to_main_screen: bool = True
+        self, bounding_box: BoundingBox | None, clamp_to_main_screen: bool = True
     ) -> tuple[Any, BoundingBox]:
-        if not actions:
-            return self._screenshot(bounding_box, clamp_to_main_screen)
-        # Attempt to turn off HUD if talon_hud is installed.
+        # Hide cursor during screenshot.
         try:
-            actions.user.hud_set_visibility(False, pause_seconds=0.02)
+            if ctrl:
+                ctrl.cursor_visible(False)
         except Exception:
             pass
         try:
-            return self._screenshot(bounding_box, clamp_to_main_screen)
-        finally:
-            # Attempt to turn on HUD if talon_hud is installed.
+            if not actions:
+                return self._screenshot(bounding_box, clamp_to_main_screen)
+            # Attempt to turn off HUD if talon_hud is installed.
             try:
-                actions.user.hud_set_visibility(True, pause_seconds=0.001)
+                actions.user.hud_set_visibility(False, pause_seconds=0.02)
+            except Exception:
+                pass
+            try:
+                return self._screenshot(bounding_box, clamp_to_main_screen)
+            finally:
+                # Attempt to turn on HUD if talon_hud is installed.
+                try:
+                    actions.user.hud_set_visibility(True, pause_seconds=0.001)
+                except Exception:
+                    pass
+        finally:
+            # Restore cursor visibility.
+            try:
+                if ctrl:
+                    ctrl.cursor_visible(True)
             except Exception:
                 pass
 
     def _screenshot_with_dxcam(
-        self, bounding_box: Optional[BoundingBox]
-    ) -> Optional[tuple[Any, BoundingBox]]:
+        self, bounding_box: BoundingBox | None
+    ) -> tuple[Any, BoundingBox] | None:
         """Capture screenshot using DXcam (Windows)."""
         if not self._dxcam_camera:
             return None
@@ -338,7 +358,7 @@ class Reader:
         return screenshot, bounding_box
 
     def _screenshot_with_mss(
-        self, bounding_box: Optional[BoundingBox]
+        self, bounding_box: BoundingBox | None
     ) -> tuple[Any, BoundingBox]:
         """Capture screenshot using MSS (macOS)."""
         assert mss is not None
@@ -383,7 +403,7 @@ class Reader:
         return screenshot, bounding_box
 
     def _screenshot_with_pil(
-        self, bounding_box: Optional[BoundingBox]
+        self, bounding_box: BoundingBox | None
     ) -> tuple[Any, BoundingBox]:
         """Capture screenshot using PIL ImageGrab (fallback)."""
         assert ImageGrab is not None
@@ -401,7 +421,7 @@ class Reader:
         return screenshot, bounding_box
 
     def _screenshot(
-        self, bounding_box: Optional[BoundingBox], clamp_to_main_screen: bool = True
+        self, bounding_box: BoundingBox | None, clamp_to_main_screen: bool = True
     ) -> tuple[Any, BoundingBox]:
         if self._is_talon_backend():
             assert screen
@@ -567,13 +587,13 @@ class ScreenContents:
 
     def __init__(
         self,
-        screen_coordinates: Optional[tuple[int, int]],
+        screen_coordinates: tuple[int, int] | None,
         bounding_box: BoundingBox,
         screenshot,
         result: _base.OcrResult,
         confidence_threshold: float,
         homophones: Mapping[str, Iterable[str]],
-        search_radius: Optional[int],
+        search_radius: int | None,
     ):
         self.screen_coordinates = screen_coordinates
         self.bounding_box = bounding_box
@@ -626,7 +646,7 @@ class ScreenContents:
 
     def find_nearest_word_coordinates(
         self, target_word: str, cursor_position: str
-    ) -> Optional[tuple[int, int]]:
+    ) -> tuple[int, int] | None:
         """Return the coordinates of the nearest instance of the provided word.
 
         Uses fuzzy matching.
@@ -647,7 +667,7 @@ class ScreenContents:
         elif cursor_position == "after":
             return word_location.end_coordinates
 
-    def find_nearest_word(self, target_word: str) -> Optional[WordLocation]:
+    def find_nearest_word(self, target_word: str) -> WordLocation | None:
         """Return the location of the nearest instance of the provided word.
 
         Uses fuzzy matching.
@@ -658,8 +678,8 @@ class ScreenContents:
     def find_nearest_words(
         self,
         target: str,
-        filter_function: Optional[Callable[[Sequence[WordLocation]], bool]] = None,
-    ) -> Optional[Sequence[WordLocation]]:
+        filter_function: Callable[[Sequence[WordLocation]], bool] | None = None,
+    ) -> Sequence[WordLocation] | None:
         """Return the locations of the nearest sequence of the provided words.
 
         Uses fuzzy matching.
@@ -671,7 +691,7 @@ class ScreenContents:
 
     def find_nearest_words_within_matches(
         self, sequences: Sequence[Sequence[WordLocation]]
-    ) -> Optional[Sequence[WordLocation]]:
+    ) -> Sequence[WordLocation] | None:
         if not sequences:
             return None
         if not self.screen_coordinates:
@@ -743,7 +763,7 @@ class ScreenContents:
     def find_longest_matching_prefix(
         self,
         target: str,
-        filter_location_function: Optional[WordLocationsPredicate] = None,
+        filter_location_function: WordLocationsPredicate | None = None,
     ) -> tuple[Sequence[Sequence[WordLocation]], int]:
         """Return a tuple of the locations of all longest matching prefixes of the
         provided words, and the length of the prefix.
@@ -779,7 +799,7 @@ class ScreenContents:
     def find_longest_matching_suffix(
         self,
         target: str,
-        filter_location_function: Optional[WordLocationsPredicate] = None,
+        filter_location_function: WordLocationsPredicate | None = None,
     ) -> tuple[Sequence[Sequence[WordLocation]], int]:
         """Return a tuple of the locations of all longest matching suffixes of the
         provided words, and the length of the suffix.

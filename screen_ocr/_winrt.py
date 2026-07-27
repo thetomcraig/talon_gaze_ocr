@@ -11,7 +11,7 @@ if not importlib.util.find_spec("winrt"):
 
 
 class WinRtBackend(_base.OcrBackend):
-    def __init__(self, language_tag: str = None):
+    def __init__(self, language_tag: str | None = None):
         # Run all winrt interactions on a new thread to avoid
         # "RuntimeError: Cannot change thread mode after it is set."
         # from import winrt.
@@ -19,9 +19,9 @@ class WinRtBackend(_base.OcrBackend):
         self._executor.submit(self._init_winrt, language_tag).result()
 
     def _init_winrt(self, language_tag):
-        import winrt.windows.graphics.imaging as imaging
-        import winrt.windows.media.ocr as ocr
-        import winrt.windows.storage.streams as streams
+        from winrt.windows.graphics import imaging
+        from winrt.windows.media import ocr
+        from winrt.windows.storage import streams
 
         engine = None
         if language_tag is None:
