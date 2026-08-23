@@ -86,6 +86,8 @@ middle (touch | click) <user.timestamped_prose>$:
 # "select through before apple" to select from the text cursor position to before the word "apple".
 select <user.prose_range>$:
     user.perform_ocr_action("select", "", prose_range)
+# Select all text in the focused viewport.
+take all$: edit.select_all()
 # Examples: 
 # "take seen apple" to select the word "apple".
 # "copy seen apple through banana" to copy the phrase "apple pear banana".
